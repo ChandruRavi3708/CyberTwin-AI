@@ -1,6 +1,16 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from modules.data_processing import preprocess_data
+
+from modules.threat_detection import (
+    detect_anomalies,
+    detect_known_threats
+)
+
+from modules.risk_scoring import calculate_risk
+
+from modules.mitre_mapping import map_to_mitre
 
 
 # -------------------------------------------------
@@ -33,6 +43,20 @@ def load_data():
 
 
 df = load_data()
+
+# -----------------------------------
+# AI PROCESSING PIPELINE
+# -----------------------------------
+
+df = preprocess_data(df)
+
+df = detect_known_threats(df)
+
+df = detect_anomalies(df)
+
+df = calculate_risk(df)
+
+df = map_to_mitre(df)
 
 
 # -------------------------------------------------
@@ -336,77 +360,204 @@ elif page == "📡 Network Monitoring":
 
 elif page == "🚨 Threat Detection":
 
-    st.header("🚨 Threat Detection Center")
+    st.header("🚨 AI Threat Detection Center")
 
-    st.info(
-        "Day 1: Rule-based suspicious event identification."
+    st.caption(
+        "Known Threat Detection + AI-Based Anomaly Detection"
     )
 
-    suspicious_events = filtered_df[
-        filtered_df["risk_level"]
+    # -----------------------------------
+    # METRICS
+    # -----------------------------------
+
+    total_threats = len(
+        filtered_df[
+            filtered_df["known_threat"] == True
+        ]
+    )
+
+    anomalies = len(
+        filtered_df[
+            filtered_df["is_anomaly"] == True
+        ]
+    )
+
+    high_risk = len(
+        filtered_df[
+            filtered_df["ai_risk_level"]
+            .isin(["High", "Critical"])
+        ]
+    )
+
+    avg_risk = round(
+        filtered_df["risk_score"].mean(),
+        1
+    )
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric(
+        "Known Threats",
+        total_threats
+    )
+
+    col2.metric(
+        "AI Anomalies",
+        anomalies
+    )
+
+    col3.metric(
+        "High Risk Events",
+        high_risk
+    )
+
+    col4.metric(
+        "Average Risk Score",
+        avg_risk
+    )
+
+    st.divider()
+
+    # -----------------------------------
+    # HIGH RISK EVENTS
+    # -----------------------------------
+
+    st.subheader(
+        "🔥 High Priority Threats"
+    )
+
+    high_risk_events = filtered_df[
+        filtered_df["ai_risk_level"]
         .isin(["High", "Critical"])
+    ].sort_values(
+        "risk_score",
+        ascending=False
+    )
+
+    display_columns = [
+
+        "timestamp",
+
+        "source_ip",
+
+        "destination_ip",
+
+        "event_type",
+
+        "threat_type",
+
+        "is_anomaly",
+
+        "risk_score",
+
+        "ai_risk_level",
+
+        "mitre_tactic",
+
+        "mitre_technique"
     ]
+
+    st.dataframe(
+        high_risk_events[
+            display_columns
+        ],
+        use_container_width=True
+    )
+
+    st.divider()
+
+    # -----------------------------------
+    # THREAT DISTRIBUTION
+    # -----------------------------------
 
     col1, col2 = st.columns(2)
 
     with col1:
 
-        st.metric(
-            "Suspicious Events",
-            len(suspicious_events)
+        threat_counts = (
+            filtered_df[
+                filtered_df["known_threat"]
+                == True
+            ]["threat_type"]
+            .value_counts()
+            .reset_index()
         )
 
+        threat_counts.columns = [
+            "Threat Type",
+            "Count"
+        ]
+
+        fig = px.bar(
+            threat_counts,
+            x="Threat Type",
+            y="Count",
+            title="Known Threat Distribution"
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
 
     with col2:
 
-        st.metric(
-            "Critical Threats",
-            len(
-                suspicious_events[
-                    suspicious_events[
-                        "risk_level"
-                    ] == "Critical"
-                ]
-            )
+        anomaly_counts = (
+            filtered_df["is_anomaly"]
+            .value_counts()
+            .reset_index()
         )
 
+        anomaly_counts.columns = [
+            "AI Detection",
+            "Count"
+        ]
+
+        anomaly_counts[
+            "AI Detection"
+        ] = anomaly_counts[
+            "AI Detection"
+        ].map({
+            True: "Anomaly",
+            False: "Normal"
+        })
+
+        fig = px.pie(
+            anomaly_counts,
+            names="AI Detection",
+            values="Count",
+            title="AI Behaviour Analysis"
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+    st.divider()
+
+    # -----------------------------------
+    # MITRE MAPPING
+    # -----------------------------------
 
     st.subheader(
-        "Detected Suspicious Activity"
+        "🎯 MITRE ATT&CK Intelligence"
     )
 
-    st.dataframe(
-        suspicious_events.sort_values(
-            "timestamp",
-            ascending=False
-        ),
-        use_container_width=True
-    )
-
-
-    st.subheader(
-        "Threat Type Distribution"
-    )
-
-    threat_counts = (
-        suspicious_events["event_type"]
-        .value_counts()
-        .reset_index()
-    )
-
-    threat_counts.columns = [
-        "Threat Type",
-        "Count"
+    mitre_data = filtered_df[
+        filtered_df["mitre_tactic"]
+        != "Unknown"
+    ][
+        [
+            "event_type",
+            "threat_type",
+            "mitre_tactic",
+            "mitre_technique",
+            "risk_score"
+        ]
     ]
 
-    fig = px.bar(
-        threat_counts,
-        x="Threat Type",
-        y="Count",
-        title="Detected Threat Activity"
-    )
-
-    st.plotly_chart(
-        fig,
+    st.dataframe(
+        mitre_data,
         use_container_width=True
     )
