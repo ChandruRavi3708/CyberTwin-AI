@@ -12,6 +12,13 @@ from modules.risk_scoring import calculate_risk
 
 from modules.mitre_mapping import map_to_mitre
 
+from modules.attack_graph import (
+    build_attack_graph,
+    get_suspicious_nodes,
+    get_critical_assets,
+    find_attack_paths,
+    get_graph_summary
+)
 
 # -------------------------------------------------
 # PAGE CONFIG
@@ -58,6 +65,23 @@ df = calculate_risk(df)
 
 df = map_to_mitre(df)
 
+# -----------------------------------
+# BUILD DYNAMIC ATTACK GRAPH
+# -----------------------------------
+
+# -----------------------------------
+# BUILD GRAPH FROM HIGH-RISK EVENTS
+# -----------------------------------
+
+graph_data = df[
+    df["ai_risk_level"].isin(
+        ["High", "Critical"]
+    )
+]
+
+attack_graph = build_attack_graph(
+    graph_data
+)
 
 # -------------------------------------------------
 # SIDEBAR
@@ -74,7 +98,8 @@ page = st.sidebar.radio(
     [
         "🏠 SOC Overview",
         "📡 Network Monitoring",
-        "🚨 Threat Detection"
+        "🚨 Threat Detection",
+        "🕸️ Attack Graph"
     ]
 )
 
@@ -561,3 +586,161 @@ elif page == "🚨 Threat Detection":
         mitre_data,
         use_container_width=True
     )
+
+
+elif page == "🕸️ Attack Graph":
+
+    st.header("🕸️ Dynamic Attack Graph")
+
+    st.caption(
+        "AI-driven visualization of suspicious network relationships and potential attack paths"
+    )
+
+    # -----------------------------------
+    # GRAPH SUMMARY
+    # -----------------------------------
+
+    summary = get_graph_summary(
+        attack_graph
+    )
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric(
+        "Network Nodes",
+        summary["total_nodes"]
+    )
+
+    col2.metric(
+        "Connections",
+        summary["total_connections"]
+    )
+
+    col3.metric(
+        "Suspicious Nodes",
+        summary["suspicious_nodes"]
+    )
+
+    col4.metric(
+        "Critical Assets",
+        summary["critical_assets"]
+    )
+
+    st.divider()
+
+    # -----------------------------------
+    # NETWORK GRAPH
+    # -----------------------------------
+
+    st.subheader(
+        "Network Relationship Graph"
+    )
+
+    import matplotlib.pyplot as plt
+    import networkx as nx
+
+    graph_to_draw = attack_graph
+
+    pos = nx.spring_layout(
+        graph_to_draw,
+        seed=42
+    )
+
+    suspicious_nodes = get_suspicious_nodes(
+        graph_to_draw
+    )
+
+    critical_nodes = get_critical_assets(
+        graph_to_draw
+    )
+
+    normal_nodes = [
+        node
+        for node in graph_to_draw.nodes()
+        if node not in suspicious_nodes
+        and node not in critical_nodes
+    ]
+
+    plt.figure(
+        figsize=(12, 8)
+    )
+
+    # Normal nodes
+    nx.draw_networkx_nodes(
+        graph_to_draw,
+        pos,
+        nodelist=normal_nodes,
+        node_size=500
+    )
+
+    # Suspicious nodes
+    nx.draw_networkx_nodes(
+        graph_to_draw,
+        pos,
+        nodelist=suspicious_nodes,
+        node_size=700
+    )
+
+    # Critical nodes
+    nx.draw_networkx_nodes(
+        graph_to_draw,
+        pos,
+        nodelist=critical_nodes,
+        node_size=900
+    )
+
+    # Edges
+    nx.draw_networkx_edges(
+        graph_to_draw,
+        pos,
+        arrows=True,
+        alpha=0.5
+    )
+
+    # Labels
+    nx.draw_networkx_labels(
+        graph_to_draw,
+        pos,
+        font_size=8
+    )
+
+    plt.axis("off")
+
+    st.pyplot(
+        plt
+    )
+
+    st.divider()
+
+    # -----------------------------------
+    # ATTACK PATH ANALYSIS
+    # -----------------------------------
+
+    st.subheader(
+        "🔮 Potential Multi-Step Attack Paths"
+    )
+
+    attack_paths = find_attack_paths(
+        attack_graph
+    )
+
+    if attack_paths:
+
+        for i, path in enumerate(
+            attack_paths,
+            start=1
+        ):
+
+            st.markdown(
+                f"### Attack Path {i}"
+            )
+
+            st.write(
+                "  ➜  ".join(path)
+            )
+
+    else:
+
+        st.success(
+            "No multi-step attack path detected."
+        )
