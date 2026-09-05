@@ -20,6 +20,11 @@ from modules.attack_graph import (
     get_graph_summary
 )
 
+from modules.attack_forecasting import (
+    forecast_next_attack,
+    get_attack_timeline
+)
+
 # -------------------------------------------------
 # PAGE CONFIG
 # -------------------------------------------------
@@ -99,7 +104,8 @@ page = st.sidebar.radio(
         "🏠 SOC Overview",
         "📡 Network Monitoring",
         "🚨 Threat Detection",
-        "🕸️ Attack Graph"
+        "🕸️ Attack Graph",
+        "🔮 Attack Forecast"
     ]
 )
 
@@ -744,3 +750,131 @@ elif page == "🕸️ Attack Graph":
         st.success(
             "No multi-step attack path detected."
         )
+
+
+elif page == "🔮 Attack Forecast":
+
+    st.header("🔮 Multi-Step Attack Forecasting")
+
+    st.caption(
+        "AI-assisted prediction of the next likely attack stage"
+    )
+
+    
+
+    # -----------------------------------
+    # GENERATE FORECAST
+    # -----------------------------------
+
+    suspicious_ips = (
+    df[
+        df["ai_risk_level"]
+        .isin(["High", "Critical"])
+    ]["source_ip"]
+    .unique())
+
+    selected_ip = st.selectbox(
+    "Select Suspicious Source / Attacker",
+    suspicious_ips)
+    forecast = forecast_next_attack(
+    df,
+    selected_ip)
+
+    forecast = forecast_next_attack(df)
+
+    # -----------------------------------
+    # DISPLAY RESULT
+    # -----------------------------------
+
+    if forecast["prediction"] is None:
+
+        st.warning(
+            forecast["status"]
+        )
+
+    else:
+
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric(
+            "Observed Stage",
+            forecast["observed_stage"]
+        )
+
+        col2.metric(
+            "Predicted Next Stage",
+            forecast["next_stage"]
+        )
+
+        col3.metric(
+            "Prediction Confidence",
+            f'{forecast["confidence"]}%'
+        )
+
+        st.divider()
+
+        # -----------------------------------
+        # MAIN PREDICTION
+        # -----------------------------------
+
+        st.subheader(
+            "🔮 AI Attack Forecast"
+        )
+
+        st.success(
+            f"""
+            Predicted Activity:
+            {forecast["prediction"]}
+            """
+        )
+
+        st.write(
+            f"""
+            Based on the observed attack progression,
+            the system predicts **{forecast["prediction"]}**
+            as the next likely attack activity.
+            """
+        )
+
+        st.divider()
+
+        # -----------------------------------
+        # ATTACK SOURCE
+        # -----------------------------------
+
+        st.subheader(
+            "🎯 Associated Network Context"
+        )
+
+        col1, col2 = st.columns(2)
+
+        col1.write(
+            f"**Source:** {forecast['source_ip']}"
+        )
+
+        col2.write(
+            f"**Latest Target:** {forecast['target_ip']}"
+        )
+
+        st.divider()
+
+        # -----------------------------------
+        # ATTACK TIMELINE
+        # -----------------------------------
+
+        st.subheader(
+            "📈 Observed Attack Sequence"
+        )
+
+        timeline = get_attack_timeline(df)
+
+        if timeline:
+
+            timeline_df = pd.DataFrame(
+                timeline
+            )
+
+            st.dataframe(
+                timeline_df,
+                use_container_width=True
+            )
