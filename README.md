@@ -41,6 +41,32 @@ streamlit run app.py
 
 `modules.evidence_chain` creates SHA-256 linked records containing event data, timestamp, previous hash, and current/event hash. It supports loading, saving, verification, and dashboard-ready integrity summaries. The application constructs an in-memory chain for Critical events; [data/evidence_chain.json](data/evidence_chain.json) is the persisted-chain starting point for the later dashboard workflow.
 
+## Phase 8 dashboard integration
+
+The single `app.py` coordinator integrates every completed module into 13 SOC views: SOC Overview, Network Monitoring, Threat Detection, Attack Graph, Attack Forecast, Unknown Behaviour Detection, Concept Drift Monitor, Digital Twin, What-If Defense Simulation, AI Defense Recommendation, XAI Investigation, Security Copilot, and Evidence Integrity. All interactive Streamlit controls have explicit globally unique keys.
+
+## Testing
+
+Run the full offline test suite with Python's built-in test runner:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+The tests cover synthetic data and detection, risk and drift, attack graphs and defense simulations, evidence tampering, and the offline explanation fallback.
+
+## Dataset analysis
+
+The **📂 Dataset Analysis** page supports CIC-style intrusion-detection CSVs, general network-flow CSVs, and the included synthetic data. Its workflow is: **Upload CSV → Normalize Dataset → AI Analysis → Risk Scoring → MITRE Mapping → Attack Graph → Forecasting**.
+
+The adapter detects common CIC columns such as Source IP, Destination IP, Destination Port, Protocol, Timestamp, Label, flow packet/byte features, and average packet size. It cleans malformed numeric values, safely samples large datasets, and converts flows to the CyberTwin event schema before passing them into the existing pipeline.
+
+The dashboard accepts CSV uploads up to **10 GB** through the project Streamlit configuration (instead of Streamlit's 200 MB default). Analysis still uses the selected row sample cap to keep ML and graph operations responsive on a hackathon laptop.
+
+Dataset labels are optional. When available, they are retained for post-analysis prototype evaluation only; they are not anomaly-model features. The page can optionally fit the Isolation Forest using BENIGN/NORMAL flows only, then evaluate the selected mixed flows.
+
+To demo with a CIC CSV, open **📂 Dataset Analysis**, upload the CSV, select a capped sample size, review the schema/normalization previews, and select **Run CyberTwin AI Analysis**.
+
 ## Demo flow
 
 Generate the dataset, open the SOC overview, then select a high-risk source in the attack forecast view. The final events form an ordered attacker-to-database scenario suitable for demonstrating the later phases as they are completed.

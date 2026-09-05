@@ -1,0 +1,5 @@
+[server]
+# Streamlit requires a positive numeric upload limit. 10 GB removes the
+# default 200 MB restriction for locally analysed CIC/network-flow CSV files.
+maxUploadSize = 10240
+maxMessageSize = 10240

@@ -16,7 +16,7 @@ def _normalise_event_type(value: object) -> str:
     return str(value).strip().lower().replace("_", " ")
 
 
-def detect_anomalies(df: pd.DataFrame, contamination: float = 0.10) -> pd.DataFrame:
+def detect_anomalies(df: pd.DataFrame, contamination: float = 0.10, training_data: pd.DataFrame | None = None) -> pd.DataFrame:
     """Mark statistically unusual activity with Isolation Forest.
 
     The model is fitted to the supplied batch for the offline prototype. Raw
@@ -42,9 +42,20 @@ def detect_anomalies(df: pd.DataFrame, contamination: float = 0.10) -> pd.DataFr
         df["is_anomaly"] = False
         return df
 
-    scaled_features = RobustScaler().fit_transform(features)
+    training_features = features
+    if training_data is not None and not training_data.empty:
+        training_features = pd.DataFrame(index=training_data.index)
+        for column in ANOMALY_FEATURES:
+            source = training_data["bytes"] if column == "data_transfer" and "bytes" in training_data else training_data.get(column, 0)
+            training_features[column] = pd.to_numeric(source, errors="coerce").fillna(0).clip(lower=0)
+    if len(training_features) < 2:
+        raise ValueError("At least two training rows are required for anomaly detection.")
+    scaler = RobustScaler().fit(training_features)
+    scaled_features = scaler.transform(features)
+    scaled_training_features = scaler.transform(training_features)
     model = IsolationForest(contamination=contamination, random_state=42, n_estimators=200)
-    predictions = model.fit_predict(scaled_features)
+    model.fit(scaled_training_features)
+    predictions = model.predict(scaled_features)
     unusualness = -model.decision_function(scaled_features)
     score_range = unusualness.max() - unusualness.min()
     scores = np.zeros(len(df)) if score_range == 0 else (unusualness - unusualness.min()) / score_range

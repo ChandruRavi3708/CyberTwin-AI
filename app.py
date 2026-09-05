@@ -1,1599 +1,250 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
+"""CyberTwin AI: single Streamlit coordinator for all platform modules."""
+
+from __future__ import annotations
+
 import matplotlib.pyplot as plt
 import networkx as nx
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import streamlit as st
+from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score
+
+from modules.attack_forecasting import forecast_next_attack, get_attack_timeline
+from modules.attack_graph import build_attack_graph, find_attack_paths, get_critical_assets, get_graph_summary
+from modules.concept_drift import monitor_concept_drift
 from modules.data_processing import preprocess_data
-
-from modules.threat_detection import (
-    detect_anomalies,
-    detect_known_threats
-)
-
-from modules.risk_scoring import calculate_risk
-
+from modules.dataset_adapter import convert_cic_to_cybertwin, detect_dataset_schema, sample_large_dataset, validate_cybertwin_schema
+from modules.defense_recommendation import rank_defense_recommendations
+from modules.defense_simulation import check_attack_path, simulate_defense
+from modules.evidence_chain import build_evidence_chain, get_evidence_summary, verify_evidence_chain
+from modules.llm_explainer import answer_security_question, generate_security_explanation
 from modules.mitre_mapping import map_to_mitre
-
+from modules.network_digital_twin import create_digital_twin, get_twin_state
+from modules.risk_scoring import calculate_risk
+from modules.threat_detection import detect_anomalies, detect_known_threats
+from modules.xai_engine import explain_event
 from modules.zero_day_detection import detect_unknown_behaviour
 
-from modules.concept_drift import monitor_concept_drift
 
-from modules.evidence_chain import build_evidence_chain
+st.set_page_config(page_title="CyberTwin AI", page_icon="🛡️", layout="wide")
+st.markdown("""<style>.stApp {background:#07111f;color:#e6f1ff}.stMetric{background:#0d1b2a;padding:12px;border-radius:8px;border:1px solid #1c3b55}</style>""", unsafe_allow_html=True)
 
-from modules.attack_graph import (
-    build_attack_graph,
-    get_suspicious_nodes,
-    get_critical_assets,
-    find_attack_paths,
-    get_graph_summary
-)
-
-from modules.attack_forecasting import (
-    forecast_next_attack,
-    get_attack_timeline
-)
-
-from modules.network_digital_twin import (
-    create_digital_twin,
-    get_twin_state
-)
-
-from modules.defense_simulation import (
-    simulate_defense,
-    check_attack_path
-)
-
-from modules.defense_recommendation import (
-    recommend_best_defense
-)
-
-# -------------------------------------------------
-# PAGE CONFIG
-# -------------------------------------------------
-
-st.set_page_config(
-    page_title="CyberTwin AI",
-    page_icon="🛡️",
-    layout="wide"
-)
-
-
-# -------------------------------------------------
-# LOAD DATA
-# -------------------------------------------------
 
 @st.cache_data
-def load_data():
-
-    df = pd.read_csv(
-        "data/network_events.csv"
-    )
-
-    df["timestamp"] = pd.to_datetime(
-        df["timestamp"]
-    )
-
-    return df
+def load_pipeline() -> tuple[pd.DataFrame, nx.DiGraph, dict[str, object], list[dict[str, object]]]:
+    raw = pd.read_csv("data/network_events.csv")
+    data = calculate_risk(map_to_mitre(detect_unknown_behaviour(detect_anomalies(detect_known_threats(preprocess_data(raw))))))
+    graph = build_attack_graph(data[data["known_threat"] | data["ai_risk_level"].isin(["High", "Critical"])])
+    return data, graph, monitor_concept_drift(data), build_evidence_chain(data[data["ai_risk_level"] == "Critical"], critical_only=True)
 
 
-df = load_data()
-
-# -----------------------------------
-# AI PROCESSING PIPELINE
-# -----------------------------------
-
-df = preprocess_data(df)
-
-df = detect_known_threats(df)
-
-df = detect_anomalies(df)
-
-df = detect_unknown_behaviour(df)
-
-drift_summary = monitor_concept_drift(df)
-
-df = map_to_mitre(df)
-
-df = calculate_risk(df)
-
-evidence_chain = build_evidence_chain(
-    df[df["ai_risk_level"] == "Critical"],
-    critical_only=True
-)
-
-# -----------------------------------
-# BUILD DYNAMIC ATTACK GRAPH
-# -----------------------------------
-
-# -----------------------------------
-# BUILD GRAPH FROM RECOGNISED THREATS AND HIGH-RISK EVENTS
-# -----------------------------------
-
-graph_data = df[
-    df["known_threat"]
-    |
-    df["ai_risk_level"].isin(["High", "Critical"])
-]
-
-attack_graph = build_attack_graph(
-    graph_data
-)
-
-# -------------------------------------------------
-# SIDEBAR
-# -------------------------------------------------
-
+df, attack_graph, drift_summary, evidence_chain = load_pipeline()
+PAGES = ["SOC Overview", "Network Monitoring", "Threat Detection", "Attack Graph", "Attack Forecast", "Unknown Behaviour Detection", "Concept Drift Monitor", "Digital Twin", "What-If Defense Simulation", "AI Defense Recommendation", "XAI Investigation", "Security Copilot", "Evidence Integrity", "📂 Dataset Analysis"]
 st.sidebar.title("🛡️ CyberTwin AI")
-
-st.sidebar.caption(
-    "Predictive Cyber Defense Platform"
-)
-
-page = st.sidebar.radio(
-    "Navigation",
-    [
-        "🏠 SOC Overview",
-        "📡 Network Monitoring",
-        "🚨 Threat Detection",
-        "🕸️ Attack Graph",
-        "🔮 Attack Forecast",
-        "🛡️ Digital Twin"
-    ],
-    key="main_navigation"
-)
-
-st.sidebar.divider()
-
-st.sidebar.subheader("Filters")
-
-risk_filter = st.sidebar.multiselect(
-    "Risk Level",
-    options=sorted(df["risk_level"].unique()),
-    default=sorted(df["risk_level"].unique())
-)
-
-event_filter = st.sidebar.multiselect(
-    "Event Type",
-    options=sorted(df["event_type"].unique()),
-    default=sorted(df["event_type"].unique())
-)
-
-
-# -------------------------------------------------
-# APPLY FILTERS
-# -------------------------------------------------
-
-filtered_df = df[
-    df["risk_level"].isin(risk_filter)
-    &
-    df["event_type"].isin(event_filter)
-]
-
-
-# -------------------------------------------------
-# HEADER
-# -------------------------------------------------
-
+page = st.sidebar.radio("Navigation", PAGES, key="nav_page")
+risk_filter = st.sidebar.multiselect("Risk level", sorted(df.risk_level.unique()), default=sorted(df.risk_level.unique()), key="nav_risk_filter")
+event_filter = st.sidebar.multiselect("Event type", sorted(df.event_type.unique()), default=sorted(df.event_type.unique()), key="nav_event_filter")
+filtered = df[df.risk_level.isin(risk_filter) & df.event_type.isin(event_filter)]
 st.title("🛡️ CyberTwin AI")
-
-st.caption(
-    "AI-Powered Threat Detection • Attack Forecasting • Digital Twin Defense"
-)
-
-st.divider()
-
-
-# =================================================
-# SOC OVERVIEW
-# =================================================
-
-if page == "🏠 SOC Overview":
-
-    st.header("Security Operations Center")
-
-    # Metrics
-
-    total_events = len(filtered_df)
-
-    high_risk = len(
-        filtered_df[
-            filtered_df["risk_level"]
-            .isin(["High", "Critical"])
-        ]
-    )
-
-    critical_events = len(
-        filtered_df[
-            filtered_df["risk_level"]
-            == "Critical"
-        ]
-    )
-
-    suspicious_sources = filtered_df[
-        filtered_df["risk_level"]
-        .isin(["High", "Critical"])
-    ]["source_ip"].nunique()
-
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    col1.metric(
-        "Total Events",
-        total_events
-    )
-
-    col2.metric(
-        "High Risk",
-        high_risk
-    )
-
-    col3.metric(
-        "Critical",
-        critical_events
-    )
-
-    col4.metric(
-        "Suspicious Sources",
-        suspicious_sources
-    )
-
-
-    st.divider()
-
-
-    # Two column charts
-
-    col1, col2 = st.columns(2)
-
-
-    with col1:
-
-        risk_counts = (
-            filtered_df["risk_level"]
-            .value_counts()
-            .reset_index()
-        )
-
-        risk_counts.columns = [
-            "Risk Level",
-            "Count"
-        ]
-
-        fig = px.bar(
-            risk_counts,
-            x="Risk Level",
-            y="Count",
-            title="Risk Distribution"
-        )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-
-    with col2:
-
-        event_counts = (
-            filtered_df["event_type"]
-            .value_counts()
-            .reset_index()
-        )
-
-        event_counts.columns = [
-            "Event Type",
-            "Count"
-        ]
-
-        fig = px.pie(
-            event_counts,
-            names="Event Type",
-            values="Count",
-            title="Network Event Distribution"
-        )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-
-    # Traffic over time
-
-    st.subheader("Network Activity Over Time")
-
-    timeline = (
-        filtered_df
-        .groupby(
-            pd.Grouper(
-                key="timestamp",
-                freq="5min"
-            )
-        )
-        .size()
-        .reset_index(name="Event Count")
-    )
-
-    fig = px.line(
-        timeline,
-        x="timestamp",
-        y="Event Count",
-        title="Network Event Timeline"
-    )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
-
-
-    st.divider()
-
-
-    # Critical alerts
-
-    st.subheader("🚨 Recent High-Risk Alerts")
-
-    alerts = filtered_df[
-        filtered_df["risk_level"]
-        .isin(["High", "Critical"])
-    ].sort_values(
-        "timestamp",
-        ascending=False
-    )
-
-    st.dataframe(
-        alerts.head(15),
-        use_container_width=True
-    )
-
-
-# =================================================
-# NETWORK MONITORING
-# =================================================
-
-elif page == "📡 Network Monitoring":
-
-    st.header("📡 Network Telemetry Monitoring")
-
-    st.write(
-        "Monitoring network events and communication patterns."
-    )
-
-    st.dataframe(
-        filtered_df,
-        use_container_width=True,
-        height=500
-    )
-
-    st.subheader(
-        "Traffic Volume Analysis"
-    )
-
-    fig = px.scatter(
-        filtered_df,
-        x="timestamp",
-        y="bytes",
-        size="bytes",
-        hover_data=[
-            "source_ip",
-            "destination_ip",
-            "event_type",
-            "risk_level"
-        ],
-        title="Network Traffic Activity"
-    )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
-
-    st.subheader(
-        "Top Communicating Source IPs"
-    )
-
-    ip_counts = (
-        filtered_df["source_ip"]
-        .value_counts()
-        .head(10)
-        .reset_index()
-    )
-
-    ip_counts.columns = [
-        "Source IP",
-        "Event Count"
-    ]
-
-    fig = px.bar(
-        ip_counts,
-        x="Source IP",
-        y="Event Count",
-        title="Top Source IP Activity"
-    )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
-
-
-# =================================================
-# THREAT DETECTION
-# =================================================
-
-elif page == "🚨 Threat Detection":
-
-    st.header("🚨 AI Threat Detection Center")
-
-    st.caption(
-        "Known Threat Detection + AI-Based Anomaly Detection"
-    )
-
-    # -----------------------------------
-    # METRICS
-    # -----------------------------------
-
-    total_threats = len(
-        filtered_df[
-            filtered_df["known_threat"] == True
-        ]
-    )
-
-    anomalies = len(
-        filtered_df[
-            filtered_df["is_anomaly"] == True
-        ]
-    )
-
-    high_risk = len(
-        filtered_df[
-            filtered_df["ai_risk_level"]
-            .isin(["High", "Critical"])
-        ]
-    )
-
-    avg_risk = round(
-        filtered_df["risk_score"].mean(),
-        1
-    )
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    col1.metric(
-        "Known Threats",
-        total_threats
-    )
-
-    col2.metric(
-        "AI Anomalies",
-        anomalies
-    )
-
-    col3.metric(
-        "High Risk Events",
-        high_risk
-    )
-
-    col4.metric(
-        "Average Risk Score",
-        avg_risk
-    )
-
-    st.divider()
-
-    # -----------------------------------
-    # HIGH RISK EVENTS
-    # -----------------------------------
-
-    st.subheader(
-        "🔥 High Priority Threats"
-    )
-
-    high_risk_events = filtered_df[
-        filtered_df["ai_risk_level"]
-        .isin(["High", "Critical"])
-    ].sort_values(
-        "risk_score",
-        ascending=False
-    )
-
-    display_columns = [
-
-        "timestamp",
-
-        "source_ip",
-
-        "destination_ip",
-
-        "event_type",
-
-        "threat_type",
-
-        "is_anomaly",
-
-        "risk_score",
-
-        "ai_risk_level",
-
-        "mitre_tactic",
-
-        "mitre_technique"
-    ]
-
-    st.dataframe(
-        high_risk_events[
-            display_columns
-        ],
-        use_container_width=True
-    )
-
-    st.divider()
-
-    # -----------------------------------
-    # THREAT DISTRIBUTION
-    # -----------------------------------
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-
-        threat_counts = (
-            filtered_df[
-                filtered_df["known_threat"]
-                == True
-            ]["threat_type"]
-            .value_counts()
-            .reset_index()
-        )
-
-        threat_counts.columns = [
-            "Threat Type",
-            "Count"
-        ]
-
-        fig = px.bar(
-            threat_counts,
-            x="Threat Type",
-            y="Count",
-            title="Known Threat Distribution"
-        )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-    with col2:
-
-        anomaly_counts = (
-            filtered_df["is_anomaly"]
-            .value_counts()
-            .reset_index()
-        )
-
-        anomaly_counts.columns = [
-            "AI Detection",
-            "Count"
-        ]
-
-        anomaly_counts[
-            "AI Detection"
-        ] = anomaly_counts[
-            "AI Detection"
-        ].map({
-            True: "Anomaly",
-            False: "Normal"
-        })
-
-        fig = px.pie(
-            anomaly_counts,
-            names="AI Detection",
-            values="Count",
-            title="AI Behaviour Analysis"
-        )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-    st.divider()
-
-    # -----------------------------------
-    # MITRE MAPPING
-    # -----------------------------------
-
-    st.subheader(
-        "🎯 MITRE ATT&CK Intelligence"
-    )
-
-    mitre_data = filtered_df[
-        filtered_df["mitre_tactic"]
-        != "Unknown"
-    ][
-        [
-            "event_type",
-            "threat_type",
-            "mitre_tactic",
-            "mitre_technique",
-            "risk_score"
-        ]
-    ]
-
-    st.dataframe(
-        mitre_data,
-        use_container_width=True
-    )
-
-
-elif page == "🕸️ Attack Graph":
-
-    st.header("🕸️ Dynamic Attack Graph")
-
-    st.caption(
-        "AI-driven visualization of suspicious network relationships and potential attack paths"
-    )
-
-    # -----------------------------------
-    # GRAPH SUMMARY
-    # -----------------------------------
-
-    summary = get_graph_summary(
-        attack_graph
-    )
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    col1.metric(
-        "Network Nodes",
-        summary["total_nodes"]
-    )
-
-    col2.metric(
-        "Connections",
-        summary["total_connections"]
-    )
-
-    col3.metric(
-        "Suspicious Nodes",
-        summary["suspicious_nodes"]
-    )
-
-    col4.metric(
-        "Critical Assets",
-        summary["critical_assets"]
-    )
-
-    st.divider()
-
-    # -----------------------------------
-    # NETWORK GRAPH
-    # -----------------------------------
-
-    st.subheader(
-        "Network Relationship Graph"
-    )
-
-    import matplotlib.pyplot as plt
-    import networkx as nx
-
-    graph_to_draw = attack_graph
-
-    pos = nx.spring_layout(
-        graph_to_draw,
-        seed=42
-    )
-
-    suspicious_nodes = get_suspicious_nodes(
-        graph_to_draw
-    )
-
-    critical_nodes = get_critical_assets(
-        graph_to_draw
-    )
-
-    normal_nodes = [
-        node
-        for node in graph_to_draw.nodes()
-        if node not in suspicious_nodes
-        and node not in critical_nodes
-    ]
-
-    plt.figure(
-        figsize=(12, 8)
-    )
-
-    # Normal nodes
-    nx.draw_networkx_nodes(
-        graph_to_draw,
-        pos,
-        nodelist=normal_nodes,
-        node_size=500
-    )
-
-    # Suspicious nodes
-    nx.draw_networkx_nodes(
-        graph_to_draw,
-        pos,
-        nodelist=suspicious_nodes,
-        node_size=700
-    )
-
-    # Critical nodes
-    nx.draw_networkx_nodes(
-        graph_to_draw,
-        pos,
-        nodelist=critical_nodes,
-        node_size=900
-    )
-
-    # Edges
-    nx.draw_networkx_edges(
-        graph_to_draw,
-        pos,
-        arrows=True,
-        alpha=0.5
-    )
-
-    # Labels
-    nx.draw_networkx_labels(
-        graph_to_draw,
-        pos,
-        font_size=8
-    )
-
-    plt.axis("off")
-
-    st.pyplot(
-        plt
-    )
-
-    st.divider()
-
-    # -----------------------------------
-    # ATTACK PATH ANALYSIS
-    # -----------------------------------
-
-    st.subheader(
-        "🔮 Potential Multi-Step Attack Paths"
-    )
-
-    attack_paths = find_attack_paths(
-        attack_graph
-    )
-
-    if attack_paths:
-
-        for i, path in enumerate(
-            attack_paths,
-            start=1
-        ):
-
-            st.markdown(
-                f"### Attack Path {i}"
-            )
-
-            st.write(
-                "  ➜  ".join(path)
-            )
-
+st.caption("AI-Powered Predictive Cyber Defense & Network Digital Twin Platform")
+
+
+def graph_plot(graph: nx.DiGraph, title: str) -> None:
+    if not graph.nodes:
+        st.info("No graph data is available."); return
+    fig, ax = plt.subplots(figsize=(10, 6)); pos = nx.spring_layout(graph, seed=42)
+    colors = ["#ef4444" if d.get("node_type") == "critical_asset" else "#f59e0b" if d.get("node_type") == "external_ip" else "#38bdf8" for _, d in graph.nodes(data=True)]
+    nx.draw(graph, pos, with_labels=True, arrows=True, node_color=colors, node_size=900, font_size=7, ax=ax)
+    ax.set_title(title); ax.axis("off"); st.pyplot(fig); plt.close(fig)
+
+
+def run_cybertwin_pipeline(events: pd.DataFrame, train_on_benign_only: bool = False) -> tuple[pd.DataFrame, nx.DiGraph, dict[str, object]]:
+    """Use the same CyberTwin modules for normalized uploaded flow records."""
+    processed = preprocess_data(events)
+    training_data = None
+    if train_on_benign_only and "original_label" in processed:
+        benign = processed[processed["original_label"].astype(str).str.strip().str.lower().isin({"benign", "normal"})]
+        if len(benign) >= 2:
+            training_data = benign
+    detected = detect_anomalies(detect_known_threats(processed), training_data=training_data)
+    results = calculate_risk(map_to_mitre(detect_unknown_behaviour(detected)))
+    graph_events = results[results["ai_risk_level"].isin(["High", "Critical"])].nlargest(100, "risk_score")
+    graph = build_attack_graph(graph_events)
+    return results, graph, {"benign_training_rows": 0 if training_data is None else len(training_data)}
+
+
+if page == "SOC Overview":
+    cols = st.columns(4); cols[0].metric("Events", len(filtered)); cols[1].metric("High risk", int(filtered.risk_level.isin(["High", "Critical"]).sum())); cols[2].metric("Critical", int((filtered.risk_level == "Critical").sum())); cols[3].metric("Sources", filtered.source_ip.nunique())
+    left, right = st.columns(2)
+    with left: st.plotly_chart(px.bar(filtered.risk_level.value_counts().reset_index(), x="risk_level", y="count", title="Risk distribution"), width="stretch")
+    with right: st.plotly_chart(px.line(filtered.groupby(pd.Grouper(key="timestamp", freq="5min")).size().reset_index(name="events"), x="timestamp", y="events", title="Activity timeline"), width="stretch")
+    st.dataframe(filtered[filtered.risk_level.isin(["High", "Critical"])].sort_values("risk_score", ascending=False).head(20), width="stretch")
+
+elif page == "Network Monitoring":
+    st.plotly_chart(px.scatter(filtered, x="timestamp", y="data_transfer", size="packet_size", color="risk_level", hover_data=["source_ip", "destination_ip", "event_type"], title="Network telemetry"), width="stretch")
+    st.dataframe(filtered, height=420, width="stretch")
+
+elif page == "Threat Detection":
+    cols = st.columns(4); cols[0].metric("Known threats", int(filtered.known_threat.sum())); cols[1].metric("AI anomalies", int(filtered.is_anomaly.sum())); cols[2].metric("Avg anomaly", round(filtered.anomaly_score.mean(), 2)); cols[3].metric("Avg risk", round(filtered.risk_score.mean(), 1))
+    st.dataframe(filtered[filtered.known_threat | filtered.is_anomaly][["timestamp", "source_ip", "event_type", "threat_type", "anomaly_score", "risk_score", "mitre_id", "mitre_technique"]].sort_values("risk_score", ascending=False), width="stretch")
+
+elif page == "Attack Graph":
+    summary = get_graph_summary(attack_graph); cols = st.columns(4)
+    for col, (label, value) in zip(cols, [("Nodes", summary["total_nodes"]), ("Edges", summary["total_connections"]), ("Suspicious", summary["suspicious_nodes"]), ("Critical assets", summary["critical_assets"])]): col.metric(label, value)
+    graph_plot(attack_graph, "Observed threat relationships")
+    for path in find_attack_paths(attack_graph): st.code(" → ".join(path))
+
+elif page == "Attack Forecast":
+    sources = sorted(df[df.known_threat].source_ip.unique().tolist())
+    if sources:
+        source = st.selectbox("Suspicious source", sources, key="forecast_source")
+        forecast = forecast_next_attack(df, source, attack_graph)
+        if forecast["prediction"]: st.success(f"{forecast['prediction']} — {forecast['confidence']}% confidence"); st.write(forecast["reason"]); st.dataframe(pd.DataFrame(get_attack_timeline(df, source)), width="stretch")
+        else: st.info(forecast["status"])
+
+elif page == "Unknown Behaviour Detection":
+    novel = filtered[filtered.zero_day_alert]
+    st.warning("This identifies unknown / novel suspicious behaviour; it does not claim real zero-day exploit detection.")
+    st.metric("Novel behaviour alerts", len(novel)); st.dataframe(novel[["timestamp", "source_ip", "event_type", "unknown_behavior_score", "known_attack_match", "novelty_label"]], width="stretch")
+
+elif page == "Concept Drift Monitor":
+    cols = st.columns(3); cols[0].metric("Drift status", str(drift_summary["drift_level"])); cols[1].metric("Drift score", drift_summary["drift_score"]); cols[2].metric("Recent events", drift_summary["recent_events"])
+    st.bar_chart(pd.Series(drift_summary["feature_drift"], name="drift"))
+
+elif page == "Digital Twin":
+    twin = create_digital_twin(attack_graph); state = get_twin_state(twin); cols = st.columns(4)
+    for col, (label, value) in zip(cols, [("Nodes", state["nodes"]), ("Connections", state["connections"]), ("Average risk", state["average_risk"]), ("Active paths", state["active_attack_path_count"])]): col.metric(label, value)
+    graph_plot(twin, "Safe digital twin")
+
+elif page == "What-If Defense Simulation":
+    twin = create_digital_twin(attack_graph); nodes, edges = list(twin.nodes), list(twin.edges)
+    if nodes:
+        action = st.selectbox("Defense action", ["Block IP", "Isolate Host", "Block Connection", "Protect Critical Asset"], key="sim_action")
+        target = st.selectbox("Target asset", nodes, key="sim_target")
+        edge = st.selectbox("Connection", edges or [(None, None)], key="sim_connection")
+        attacker = st.selectbox("Attack source", nodes, key="sim_attacker"); critical = st.selectbox("Critical target", [n for n in nodes if n != attacker], key="sim_critical")
+        if st.button("Run simulation", key="sim_run"):
+            result = simulate_defense(twin, action, target=target, source=edge[0], destination=edge[1], attacker=attacker, critical_target=critical)
+            cols = st.columns(4); cols[0].metric("Before risk", result["before_risk"]); cols[1].metric("After risk", result["after_risk"]); cols[2].metric("Reduction", f"{result['risk_reduction_percent']}%"); cols[3].metric("Path disrupted", "YES" if result["attack_path_disrupted"] else "NO")
+
+elif page == "AI Defense Recommendation":
+    recommendations = rank_defense_recommendations(create_digital_twin(attack_graph))
+    st.dataframe(pd.DataFrame(recommendations)[["action", "target", "risk_reduction_percent", "path_reduction_percent", "attack_path_disrupted", "operational_cost", "defense_score"]], width="stretch")
+
+elif page == "XAI Investigation":
+    candidates = filtered.sort_values("risk_score", ascending=False)
+    if not candidates.empty:
+        index = st.selectbox("Event", candidates.index.tolist(), format_func=lambda i: f"{candidates.loc[i, 'source_ip']} — {candidates.loc[i, 'event_type']} ({candidates.loc[i, 'risk_score']})", key="xai_event")
+        explanation = explain_event(candidates.loc[index]); st.subheader("Why was this flagged?"); st.write(" • ".join(explanation["why_flagged"])); st.dataframe(pd.DataFrame(explanation["top_contributing_factors"]), width="stretch"); st.write(explanation["recommended_investigation_steps"])
+
+elif page == "Security Copilot":
+    candidates = filtered.sort_values("risk_score", ascending=False)
+    if not candidates.empty:
+        index = st.selectbox("Event context", candidates.index.tolist(), key="copilot_event")
+        question = st.selectbox("Ask the copilot", ["Why is this host dangerous?", "What should I investigate?", "What MITRE technique is this?", "What could happen next?", "What defense action is recommended?"], key="copilot_question")
+        st.info(answer_security_question(question, candidates.loc[index], attack_graph)); st.caption(generate_security_explanation(candidates.loc[index], attack_graph))
+
+elif page == "Evidence Integrity":
+    evidence = get_evidence_summary(evidence_chain); cols = st.columns(3); cols[0].metric("Evidence records", evidence["evidence_records"]); cols[1].metric("Integrity", evidence["chain_integrity"]); cols[2].metric("Latest hash", str(evidence["latest_hash"])[:16] + "…")
+    if verify_evidence_chain(evidence_chain): st.success("Evidence hash chain integrity verified.")
+    else: st.error(evidence["reason"])
+    st.dataframe(pd.DataFrame(evidence_chain)[["index", "timestamp", "previous_hash", "current_hash"]] if evidence_chain else pd.DataFrame(), width="stretch")
+
+elif page == "📂 Dataset Analysis":
+    st.header("📂 Dataset Analysis")
+    st.caption("Upload a CIC-style or other network-flow CSV. Labels are optional and are used only after detection for prototype evaluation.")
+    uploaded = st.file_uploader("Upload network traffic CSV", type=["csv"], key="dataset_upload_file")
+    if uploaded is None:
+        st.info("Upload a CSV to normalize it into CyberTwin events and run the existing AI pipeline.")
     else:
-
-        st.success(
-            "No multi-step attack path detected."
-        )
-
-
-elif page == "🔮 Attack Forecast":
-
-    st.header("🔮 Multi-Step Attack Forecasting")
-
-    st.caption(
-        "AI-assisted prediction of the next likely attack stage"
-    )
-
-    
-
-    # -----------------------------------
-    # GENERATE FORECAST
-    # -----------------------------------
-
-    suspicious_ips = (
-    df[
-        df["ai_risk_level"]
-        .isin(["High", "Critical"])
-    ]["source_ip"]
-    .unique())
-
-    selected_ip = st.selectbox(
-    "Select Suspicious Source / Attacker",
-    suspicious_ips,
-    key="forecast_source_ip")
-    forecast = forecast_next_attack(
-    df,
-    selected_ip,
-    attack_graph)
-
-    # -----------------------------------
-    # DISPLAY RESULT
-    # -----------------------------------
-
-    if forecast["prediction"] is None:
-
-        st.warning(
-            forecast["status"]
-        )
-
-    else:
-
-        col1, col2, col3 = st.columns(3)
-
-        col1.metric(
-            "Observed Stage",
-            forecast["observed_stage"]
-        )
-
-        col2.metric(
-            "Predicted Next Stage",
-            forecast["next_stage"]
-        )
-
-        col3.metric(
-            "Prediction Confidence",
-            f'{forecast["confidence"]}%'
-        )
-
-        st.divider()
-
-        # -----------------------------------
-        # MAIN PREDICTION
-        # -----------------------------------
-
-        st.subheader(
-            "🔮 AI Attack Forecast"
-        )
-
-        st.success(
-            f"""
-            Predicted Activity:
-            {forecast["prediction"]}
-            """
-        )
-
-        st.write(
-            f"""
-            Based on the observed attack progression,
-            the system predicts **{forecast["prediction"]}**
-            as the next likely attack activity.
-            """
-        )
-
-        st.divider()
-
-        # -----------------------------------
-        # ATTACK SOURCE
-        # -----------------------------------
-
-        st.subheader(
-            "🎯 Associated Network Context"
-        )
-
-        col1, col2 = st.columns(2)
-
-        col1.write(
-            f"**Source:** {forecast['source_ip']}"
-        )
-
-        col2.write(
-            f"**Latest Target:** {forecast['target_ip']}"
-        )
-
-        st.divider()
-
-        # -----------------------------------
-        # ATTACK TIMELINE
-        # -----------------------------------
-
-        st.subheader(
-            "📈 Observed Attack Sequence"
-        )
-
-        timeline = get_attack_timeline(df)
-
-        if timeline:
-
-            timeline_df = pd.DataFrame(
-                timeline
-            )
-
-            st.dataframe(
-                timeline_df,
-                use_container_width=True
-            )
-
-
-elif page == "🛡️ Digital Twin":
-
-    # ==========================================
-    # PAGE HEADER
-    # ==========================================
-
-    st.header("🛡️ Network Digital Twin")
-
-    st.caption(
-        "Simulate cyber defense actions safely before applying them to the real network"
-    )
-
-
-    # ==========================================
-    # CREATE DIGITAL TWIN
-    # ==========================================
-
-    twin = create_digital_twin(
-        attack_graph
-    )
-
-
-    # ==========================================
-    # CHECK NETWORK AVAILABILITY
-    # ==========================================
-
-    if twin.number_of_nodes() == 0:
-
-        st.warning(
-            "No high-risk network data is available for simulation."
-        )
-
-        st.stop()
-
-
-    # ==========================================
-    # DIGITAL TWIN STATE
-    # ==========================================
-
-    state = get_twin_state(
-        twin
-    )
-
-
-    # ==========================================
-    # DIGITAL TWIN METRICS
-    # ==========================================
-
-    col1, col2, col3 = st.columns(3)
-
-
-    with col1:
-
-        st.metric(
-            "Network Nodes",
-            state["nodes"]
-        )
-
-
-    with col2:
-
-        st.metric(
-            "Connections",
-            state["connections"]
-        )
-
-
-    with col3:
-
-        st.metric(
-            "Average Risk",
-            state["average_risk"]
-        )
-
-
-    st.divider()
-
-
-    # ==========================================
-    # AI DEFENSE RECOMMENDATION
-    # ==========================================
-
-    st.subheader(
-        "🤖 AI Defense Recommendation"
-    )
-
-
-    best_defense = (
-        recommend_best_defense(
-            twin
-        )
-    )
-
-
-    if best_defense:
-
-        col1, col2, col3 = st.columns(3)
-
-
-        with col1:
-
-            st.metric(
-                "Recommended Action",
-                best_defense["action"]
-            )
-
-
-        with col2:
-
-            st.metric(
-                "Target",
-                best_defense["target"]
-            )
-
-
-        with col3:
-
-            st.metric(
-                "Estimated Risk Reduction",
-                f"{best_defense['risk_reduction']}%"
-            )
-
-
-    st.divider()
-
-
-    # ==========================================
-    # GET NODES AND EDGES
-    # ==========================================
-
-    nodes = list(
-        twin.nodes()
-    )
-
-    edges = list(
-        twin.edges()
-    )
-
-
-    # ==========================================
-    # ATTACK PATH ANALYSIS
-    # ==========================================
-
-    st.subheader(
-        "🎯 Attack Path Analysis"
-    )
-
-
-    attacker = None
-    critical_target = None
-
-
-    if len(nodes) >= 2:
-
-
-        attacker = st.selectbox(
-
-            "Select Attack Source",
-
-            nodes,
-
-            key="digital_twin_attack_source"
-        )
-
-
-        available_targets = [
-
-            node
-            for node in nodes
-            if node != attacker
-        ]
-
-
-        if available_targets:
-
-            critical_target = st.selectbox(
-
-                "Select Critical Target",
-
-                available_targets,
-
-                key="digital_twin_critical_target"
-            )
-
-
-        if (
-            attacker is not None
-            and critical_target is not None
-        ):
-
-            current_path = (
-                check_attack_path(
-
-                    twin,
-
-                    attacker,
-
-                    critical_target
-                )
-            )
-
-
-            if current_path:
-
-                st.warning(
-                    "⚠️ Active attack path detected between the selected nodes."
-                )
-
+        file_id = f"{uploaded.name}:{uploaded.size}"
+        if st.session_state.get("dataset_file_id") != file_id:
+            try:
+                st.session_state.dataset_raw_df = pd.read_csv(uploaded, low_memory=False)
+                st.session_state.dataset_file_id = file_id
+                for key in ("dataset_normalized_df", "dataset_results_df", "dataset_attack_graph", "dataset_forecast_results", "dataset_analysis_completed"):
+                    st.session_state.pop(key, None)
+            except (UnicodeDecodeError, pd.errors.ParserError, ValueError) as error:
+                st.error(f"The CSV could not be read: {error}")
+        raw = st.session_state.get("dataset_raw_df")
+        if raw is not None:
+            max_rows = st.selectbox("Maximum rows to analyze", [1_000, 5_000, 10_000, 25_000, 50_000], index=1, key="dataset_sample_size")
+            sampling_method = st.selectbox("Sampling method", ["Random Sample", "First N Rows"], key="dataset_sampling_method")
+            preview_rows = st.selectbox("Preview rows", [5, 10, 25], key="dataset_preview_rows")
+            selection_id = f"{file_id}:{max_rows}:{sampling_method}"
+            if st.session_state.get("dataset_selection_id") != selection_id:
+                st.session_state.dataset_selection_id = selection_id
+                for key in ("dataset_results_df", "dataset_attack_graph", "dataset_forecast_results", "dataset_analysis_completed"):
+                    st.session_state.pop(key, None)
+            selected = sample_large_dataset(raw, max_rows=max_rows, method=sampling_method)
+            normalized, schema = convert_cic_to_cybertwin(selected)
+            st.session_state.dataset_normalized_df = normalized
+            st.subheader("1. Upload and dataset preview")
+            cols = st.columns(4); cols[0].metric("Dataset", uploaded.name); cols[1].metric("Original rows", len(raw)); cols[2].metric("Selected rows", len(selected)); cols[3].metric("File size", f"{uploaded.size / 1_048_576:.2f} MB")
+            st.dataframe(raw.head(preview_rows), width="stretch")
+            st.subheader("2. Detected schema and data quality")
+            schema_display = {source: target for target, source in schema["mapping"].items()}
+            st.json({"column_mapping": schema_display, "columns_detected": schema["detected_columns"], "missing_important": schema["missing_important"], "fallbacks": schema["fallbacks"]})
+            numeric = selected.select_dtypes(include=np.number)
+            quality = {"missing_values": int(selected.isna().sum().sum()), "duplicate_rows": int(selected.duplicated().sum()), "infinite_values": int(np.isinf(numeric.to_numpy()).sum()) if not numeric.empty else 0, "numeric_columns": len(numeric.columns), "categorical_columns": len(selected.select_dtypes(exclude=np.number).columns)}
+            st.dataframe(pd.DataFrame([quality]), width="stretch")
+            if schema["missing_important"]:
+                st.warning("Missing important fields: " + ", ".join(schema["missing_important"]) + ". Safe fallback values will be used where possible.")
+            st.subheader("3. CyberTwin normalization")
+            validation = validate_cybertwin_schema(normalized)
+            if validation["is_valid"]:
+                st.success("Normalized data is compatible with the existing CyberTwin event pipeline.")
+                original_column, normalized_column = st.columns(2)
+                with original_column: st.caption("Selected source-flow sample"); st.dataframe(selected.head(preview_rows), width="stretch")
+                with normalized_column: st.caption("Normalized CyberTwin events"); st.dataframe(normalized.head(preview_rows), width="stretch")
             else:
-
-                st.info(
-                    "No active attack path currently exists between the selected nodes."
-                )
-
-
-    else:
-
-        st.info(
-            "At least two nodes are required for attack path analysis."
-        )
-
-
-    st.divider()
-
-
-    # ==========================================
-    # WHAT-IF DEFENSE SIMULATION
-    # ==========================================
-
-    st.subheader(
-        "🧪 What-If Defense Simulation"
-    )
-
-
-    action = st.selectbox(
-
-        "Select Defense Action",
-
-        [
-            "Block IP",
-            "Isolate Host",
-            "Block Connection",
-            "Protect Critical Asset"
-        ],
-
-        key="digital_twin_defense_action"
-    )
-
-
-    target = None
-    source = None
-    destination = None
-
-
-    # ------------------------------------------
-    # TARGET-BASED ACTIONS
-    # ------------------------------------------
-
-    if action in [
-
-        "Block IP",
-
-        "Isolate Host",
-
-        "Protect Critical Asset"
-    ]:
-
-
-        target = st.selectbox(
-
-            "Select Target",
-
-            nodes,
-
-            key="digital_twin_defense_target"
-        )
-
-
-    # ------------------------------------------
-    # CONNECTION-BASED ACTION
-    # ------------------------------------------
-
-    elif action == "Block Connection":
-
-
-        if edges:
-
-
-            edge_options = [
-
-                f"{source_node} → {destination_node}"
-
-                for source_node,
-                destination_node
-
-                in edges
-            ]
-
-
-            selected_edge_text = (
-
-                st.selectbox(
-
-                    "Select Connection",
-
-                    edge_options,
-
-                    key="digital_twin_connection"
-                )
-            )
-
-
-            selected_index = (
-
-                edge_options.index(
-                    selected_edge_text
-                )
-            )
-
-
-            selected_edge = (
-
-                edges[
-                    selected_index
-                ]
-            )
-
-
-            source = selected_edge[0]
-
-            destination = selected_edge[1]
-
-
-        else:
-
-            st.warning(
-                "No network connections are available."
-            )
-
-
-    st.divider()
-
-
-    # ==========================================
-    # RUN SIMULATION BUTTON
-    # ==========================================
-
-    run_simulation = st.button(
-
-        "🚀 Run What-If Simulation",
-
-        key="digital_twin_run_simulation",
-
-        use_container_width=True
-    )
-
-
-    # ==========================================
-    # SIMULATION EXECUTION
-    # ==========================================
-
-    if run_simulation:
-
-
-        result = simulate_defense(
-
-            graph=twin,
-
-            action=action,
-
-            target=target,
-
-            source=source,
-
-            destination=destination,
-
-            attacker=attacker,
-
-            critical_target=critical_target
-        )
-
-
-        simulated_graph = (
-
-            result["graph"]
-        )
-
-
-        # ======================================
-        # RESULTS HEADER
-        # ======================================
-
-        st.divider()
-
-        st.subheader(
-            "📊 Simulation Results"
-        )
-
-
-        # ======================================
-        # RISK METRICS
-        # ======================================
-
-        col1, col2, col3 = st.columns(3)
-
-
-        with col1:
-
-            st.metric(
-
-                "Risk Before",
-
-                result["before_risk"]
-            )
-
-
-        with col2:
-
-            st.metric(
-
-                "Risk After",
-
-                result["after_risk"]
-            )
-
-
-        with col3:
-
-            st.metric(
-
-                "Risk Reduction",
-
-                f"{result['risk_reduction_percent']}%"
-            )
-
-
-        # ======================================
-        # ATTACK PATH BEFORE / AFTER
-        # ======================================
-
-        st.divider()
-
-        st.subheader(
-            "🔍 Attack Path Impact"
-        )
-
-
-        if (
-            attacker is not None
-            and critical_target is not None
-        ):
-
-
-            path_before = (
-
-                check_attack_path(
-
-                    twin,
-
-                    attacker,
-
-                    critical_target
-                )
-            )
-
-
-            path_after = (
-
-                check_attack_path(
-
-                    simulated_graph,
-
-                    attacker,
-
-                    critical_target
-                )
-            )
-
-
-            col1, col2 = st.columns(2)
-
-
-            with col1:
-
-                st.metric(
-
-                    "Attack Path Before",
-
-                    "ACTIVE"
-                    if path_before
-                    else "NOT FOUND"
-                )
-
-
-            with col2:
-
-                st.metric(
-
-                    "Attack Path After",
-
-                    "ACTIVE"
-                    if path_after
-                    else "DISRUPTED"
-                )
-
-
-            if path_before and not path_after:
-
-                st.success(
-                    "🛡️ Defense action successfully disrupted the selected attack path."
-                )
-
-
-            elif path_before and path_after:
-
-                st.warning(
-                    "⚠️ Attack path is still active. Consider another defense action."
-                )
-
-
-        # ======================================
-        # BEFORE VS AFTER GRAPH
-        # ======================================
-
-        st.divider()
-
-        st.subheader(
-            "🕸️ Before vs After Network Simulation"
-        )
-
-
-        # Create one stable layout
-
-        base_positions = nx.spring_layout(
-
-            twin,
-
-            seed=42
-        )
-
-
-        col1, col2 = st.columns(2)
-
-
-        # --------------------------------------
-        # BEFORE GRAPH
-        # --------------------------------------
-
-        with col1:
-
-
-            st.markdown(
-                "### ⚠️ Before Defense"
-            )
-
-
-            fig_before, ax_before = plt.subplots(
-                figsize=(8, 6)
-            )
-
-
-            nx.draw(
-
-                twin,
-
-                base_positions,
-
-                with_labels=True,
-
-                arrows=True,
-
-                node_size=1200,
-
-                font_size=8,
-
-                ax=ax_before
-            )
-
-
-            ax_before.axis(
-                "off"
-            )
-
-
-            st.pyplot(
-                fig_before
-            )
-
-
-            plt.close(
-                fig_before
-            )
-
-
-        # --------------------------------------
-        # AFTER GRAPH
-        # --------------------------------------
-
-        with col2:
-
-
-            st.markdown(
-                "### 🛡️ After Defense"
-            )
-
-
-            fig_after, ax_after = plt.subplots(
-                figsize=(8, 6)
-            )
-
-
-            after_positions = {
-
-                node:
-                base_positions[node]
-
-                for node
-                in simulated_graph.nodes()
-
-                if node
-                in base_positions
-            }
-
-
-            nx.draw(
-
-                simulated_graph,
-
-                after_positions,
-
-                with_labels=True,
-
-                arrows=True,
-
-                node_size=1200,
-
-                font_size=8,
-
-                ax=ax_after
-            )
-
-
-            ax_after.axis(
-                "off"
-            )
-
-
-            st.pyplot(
-                fig_after
-            )
-
-
-            plt.close(
-                fig_after
-            )
-
-
-        # ======================================
-        # FINAL SIMULATION SUMMARY
-        # ======================================
-
-        st.divider()
-
-        st.subheader(
-            "🛡️ Defense Simulation Summary"
-        )
-
-
-        st.success(
-
-            f"""
-
-            Defense simulation completed successfully.
-
-            **Selected Action:** {action}
-
-            **Risk Before:** {result["before_risk"]}
-
-            **Risk After:** {result["after_risk"]}
-
-            **Estimated Risk Reduction:** {result["risk_reduction_percent"]}%
-
-            """
-        )
+                st.error("Normalization could not provide required fields: " + ", ".join(validation["missing_columns"]))
+            has_benign = normalized["original_label"].astype(str).str.strip().str.lower().isin({"benign", "normal"}).any()
+            train_benign = st.checkbox("Train Isolation Forest using BENIGN / NORMAL flows only", disabled=not has_benign, key="dataset_train_benign_only")
+            if not has_benign:
+                st.warning("No BENIGN / NORMAL labels were found; the existing unsupervised approach will be used.")
+            if st.button("🚀 Run CyberTwin AI Analysis", key="dataset_run_analysis_btn", disabled=not validation["is_valid"]):
+                with st.spinner("Running normalized flows through the CyberTwin pipeline..."):
+                    try:
+                        results, uploaded_graph, run_info = run_cybertwin_pipeline(normalized, train_benign)
+                        st.session_state.dataset_results_df = results
+                        st.session_state.dataset_attack_graph = uploaded_graph
+                        st.session_state.dataset_forecast_results = run_info
+                        st.session_state.dataset_analysis_completed = True
+                    except (ValueError, TypeError) as error:
+                        st.error(f"Analysis could not be completed: {error}")
+            if st.session_state.get("dataset_analysis_completed"):
+                results = st.session_state.dataset_results_df; uploaded_graph = st.session_state.dataset_attack_graph
+                st.subheader("4. AI analysis results")
+                cols = st.columns(6)
+                metrics = [("Flows analyzed", len(results)), ("Anomalies", int(results.is_anomaly.sum())), ("High risk", int((results.ai_risk_level == "High").sum())), ("Critical", int((results.ai_risk_level == "Critical").sum())), ("Source hosts", results.source_ip.nunique()), ("Destination hosts", results.destination_ip.nunique())]
+                for col, (label, value) in zip(cols, metrics): col.metric(label, value)
+                left, right = st.columns(2)
+                with left: st.plotly_chart(px.bar(results.ai_risk_level.value_counts().reset_index(), x="ai_risk_level", y="count", title="Risk level distribution"), width="stretch")
+                with right: st.plotly_chart(px.histogram(results, x="anomaly_score", nbins=30, title="Anomaly score distribution"), width="stretch")
+                host_risk = results.groupby("source_ip", as_index=False).risk_score.max().nlargest(10, "risk_score")
+                st.plotly_chart(px.bar(host_risk, x="source_ip", y="risk_score", title="Top risky source hosts"), width="stretch")
+                if results["original_label"].ne("Unknown").any(): st.plotly_chart(px.bar(results.original_label.value_counts().head(20).reset_index(), x="original_label", y="count", title="Traffic / attack label distribution"), width="stretch")
+                mitre = results[results.mitre_id.ne("Unknown")].mitre_technique.value_counts().reset_index()
+                if not mitre.empty: st.plotly_chart(px.bar(mitre, x="mitre_technique", y="count", title="MITRE ATT&CK mapping distribution (prototype contextual mapping)"), width="stretch")
+                st.subheader("5. Attack graph, forecast, novelty, and drift")
+                graph_plot(uploaded_graph, "Top high-risk uploaded flow relationships")
+                sources = sorted(results[results.ai_risk_level.isin(["High", "Critical"])].source_ip.unique())
+                if sources:
+                    source = st.selectbox("Forecast source", sources, key="dataset_forecast_source")
+                    forecast = forecast_next_attack(results, source, uploaded_graph)
+                    st.info("Predicted plausible next attack stage: " + (forecast["prediction"] or forecast["status"]))
+                    if forecast["prediction"]: st.caption(f"{forecast['confidence']}% confidence — {forecast['reason']}")
+                novel = results[results.zero_day_alert]
+                st.warning(f"Unknown / Novel Suspicious Behaviour alerts: {len(novel)}. This is not a guaranteed zero-day detection.")
+                st.dataframe(novel[["source_ip", "destination_ip", "unknown_behavior_score", "known_attack_match", "novelty_label"]], width="stretch")
+                drift = monitor_concept_drift(results, recent_fraction=0.5)
+                st.metric("Dataset segment drift", f"{drift['drift_level']} ({drift['drift_score']})")
+                if results["original_label"].ne("Unknown").any():
+                    st.subheader("6. Prototype Evaluation on Uploaded Dataset")
+                    truth = ~results.original_label.astype(str).str.strip().str.lower().isin({"benign", "normal", "unknown", ""})
+                    prediction = results.is_anomaly.astype(bool)
+                    cols = st.columns(3); cols[0].metric("Precision", round(precision_score(truth, prediction, zero_division=0), 3)); cols[1].metric("Recall", round(recall_score(truth, prediction, zero_division=0), 3)); cols[2].metric("F1", round(f1_score(truth, prediction, zero_division=0), 3))
+                    matrix = confusion_matrix(truth, prediction, labels=[False, True])
+                    st.dataframe(pd.DataFrame(matrix, index=["Actual benign", "Actual attack"], columns=["Predicted normal", "Predicted anomaly"]), width="stretch")
