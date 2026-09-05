@@ -18,6 +18,8 @@ from modules.zero_day_detection import detect_unknown_behaviour
 
 from modules.concept_drift import monitor_concept_drift
 
+from modules.evidence_chain import build_evidence_chain
+
 from modules.attack_graph import (
     build_attack_graph,
     get_suspicious_nodes,
@@ -93,6 +95,11 @@ drift_summary = monitor_concept_drift(df)
 df = map_to_mitre(df)
 
 df = calculate_risk(df)
+
+evidence_chain = build_evidence_chain(
+    df[df["ai_risk_level"] == "Critical"],
+    critical_only=True
+)
 
 # -----------------------------------
 # BUILD DYNAMIC ATTACK GRAPH

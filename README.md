@@ -37,6 +37,10 @@ streamlit run app.py
 
 `modules.xai_engine` turns risk-factor contributions into structured reasons, factor rankings, MITRE context, and investigation steps. `modules.llm_explainer` provides a fully local template security copilot and a safe provider interface for an optional future LLM integration; no API key is required or stored.
 
+## Phase 7 tamper-evident evidence
+
+`modules.evidence_chain` creates SHA-256 linked records containing event data, timestamp, previous hash, and current/event hash. It supports loading, saving, verification, and dashboard-ready integrity summaries. The application constructs an in-memory chain for Critical events; [data/evidence_chain.json](data/evidence_chain.json) is the persisted-chain starting point for the later dashboard workflow.
+
 ## Demo flow
 
 Generate the dataset, open the SOC overview, then select a high-risk source in the attack forecast view. The final events form an ordered attacker-to-database scenario suitable for demonstrating the later phases as they are completed.
