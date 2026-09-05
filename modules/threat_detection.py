@@ -1,134 +1,78 @@
+"""Known-threat rules and reusable Isolation Forest anomaly detection."""
+
+from __future__ import annotations
+
+import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
+from sklearn.preprocessing import RobustScaler
 
 
-def detect_anomalies(df):
+ANOMALY_FEATURES = ["port", "failed_logins", "connections", "data_transfer", "packet_size", "request_frequency"]
 
+
+def _normalise_event_type(value: object) -> str:
+    """Normalise legacy and Phase 1 event labels for rule matching."""
+    return str(value).strip().lower().replace("_", " ")
+
+
+def detect_anomalies(df: pd.DataFrame, contamination: float = 0.10) -> pd.DataFrame:
+    """Mark statistically unusual activity with Isolation Forest.
+
+    The model is fitted to the supplied batch for the offline prototype. Raw
+    decision values are inverted and normalised to a 0--1 anomaly score.
+    """
+    if not 0 < contamination < 0.5:
+        raise ValueError("contamination must be between 0 and 0.5")
     df = df.copy()
+    if df.empty:
+        df["anomaly_prediction"] = pd.Series(dtype="int64")
+        df["anomaly_score"] = pd.Series(dtype="float64")
+        df["is_anomaly"] = pd.Series(dtype="bool")
+        return df
 
-    # Features used by AI
+    features = pd.DataFrame(index=df.index)
+    for column in ANOMALY_FEATURES:
+        source = df["bytes"] if column == "data_transfer" and "bytes" in df else df.get(column, 0)
+        features[column] = pd.to_numeric(source, errors="coerce").fillna(0).clip(lower=0)
 
-    features = [
-        "bytes",
-        "failed_logins",
-        "port",
-        "hour",
-        "log_bytes",
-        "is_auth_event",
-        "is_scan",
-        "is_lateral_movement",
-        "is_exfiltration"
-    ]
+    if len(df) == 1:
+        df["anomaly_prediction"] = 1
+        df["anomaly_score"] = 0.0
+        df["is_anomaly"] = False
+        return df
 
-    X = df[features]
-
-    # -----------------------------------
-    # ISOLATION FOREST
-    # -----------------------------------
-
-    model = IsolationForest(
-        contamination=0.10,
-        random_state=42
-    )
-
-    predictions = model.fit_predict(X)
-
-    anomaly_scores = model.decision_function(X)
-
-    # -----------------------------------
-    # SAVE RESULTS
-    # -----------------------------------
-
+    scaled_features = RobustScaler().fit_transform(features)
+    model = IsolationForest(contamination=contamination, random_state=42, n_estimators=200)
+    predictions = model.fit_predict(scaled_features)
+    unusualness = -model.decision_function(scaled_features)
+    score_range = unusualness.max() - unusualness.min()
+    scores = np.zeros(len(df)) if score_range == 0 else (unusualness - unusualness.min()) / score_range
     df["anomaly_prediction"] = predictions
-
-    df["anomaly_score"] = anomaly_scores
-
-    df["is_anomaly"] = (
-        df["anomaly_prediction"] == -1
-    )
-
+    df["anomaly_score"] = np.round(scores, 3)
+    df["is_anomaly"] = predictions == -1
     return df
 
-def detect_known_threats(df):
 
+def detect_known_threats(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply transparent rules for recognised attack behaviours."""
     df = df.copy()
-
+    event_types = df.get("event_type", pd.Series("", index=df.index)).map(_normalise_event_type)
+    failed_logins = pd.to_numeric(df.get("failed_logins", 0), errors="coerce").fillna(0)
+    data_transfer = pd.to_numeric(df.get("data_transfer", df.get("bytes", 0)), errors="coerce").fillna(0)
     df["known_threat"] = False
-
     df["threat_type"] = "Normal"
-
-    # -----------------------------------
-    # PORT SCAN
-    # -----------------------------------
-
-    scan_condition = (
-        df["event_type"] == "port_scan"
-    )
-
-    df.loc[
-        scan_condition,
-        "known_threat"
-    ] = True
-
-    df.loc[
-        scan_condition,
-        "threat_type"
-    ] = "Port Scan / Reconnaissance"
-
-    # -----------------------------------
-    # BRUTE FORCE
-    # -----------------------------------
-
-    brute_force_condition = (
-        df["failed_logins"] >= 5
-    )
-
-    df.loc[
-        brute_force_condition,
-        "known_threat"
-    ] = True
-
-    df.loc[
-        brute_force_condition,
-        "threat_type"
-    ] = "Credential Attack"
-
-    # -----------------------------------
-    # LATERAL MOVEMENT
-    # -----------------------------------
-
-    lateral_condition = (
-        df["event_type"] ==
-        "lateral_movement"
-    )
-
-    df.loc[
-        lateral_condition,
-        "known_threat"
-    ] = True
-
-    df.loc[
-        lateral_condition,
-        "threat_type"
-    ] = "Lateral Movement"
-
-    # -----------------------------------
-    # DATA EXFILTRATION
-    # -----------------------------------
-
-    exfiltration_condition = (
-        df["event_type"] ==
-        "data_exfiltration"
-    )
-
-    df.loc[
-        exfiltration_condition,
-        "known_threat"
-    ] = True
-
-    df.loc[
-        exfiltration_condition,
-        "threat_type"
-    ] = "Data Exfiltration"
-
+    rules = [
+        (event_types.eq("port scan"), "Port Scan / Reconnaissance"),
+        (event_types.eq("failed login burst") | event_types.eq("login failure") | failed_logins.ge(5), "Credential Attack"),
+        (event_types.eq("credential abuse"), "Credential Abuse"),
+        (event_types.eq("suspicious connection"), "Suspicious Connection"),
+        (event_types.eq("malware activity"), "Malware Activity"),
+        (event_types.eq("lateral movement"), "Lateral Movement"),
+        (event_types.eq("privilege escalation"), "Privilege Escalation"),
+        (event_types.eq("data exfiltration") | (event_types.eq("data transfer") & data_transfer.ge(50_000)), "Data Exfiltration"),
+    ]
+    for condition, threat_name in rules:
+        df.loc[condition, "known_threat"] = True
+        df.loc[condition, "threat_type"] = threat_name
     return df

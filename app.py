@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import matplotlib.pyplot as plt
+import networkx as nx
 from modules.data_processing import preprocess_data
 
 from modules.threat_detection import (
@@ -11,6 +13,10 @@ from modules.threat_detection import (
 from modules.risk_scoring import calculate_risk
 
 from modules.mitre_mapping import map_to_mitre
+
+from modules.zero_day_detection import detect_unknown_behaviour
+
+from modules.concept_drift import monitor_concept_drift
 
 from modules.attack_graph import (
     build_attack_graph,
@@ -23,6 +29,20 @@ from modules.attack_graph import (
 from modules.attack_forecasting import (
     forecast_next_attack,
     get_attack_timeline
+)
+
+from modules.network_digital_twin import (
+    create_digital_twin,
+    get_twin_state
+)
+
+from modules.defense_simulation import (
+    simulate_defense,
+    check_attack_path
+)
+
+from modules.defense_recommendation import (
+    recommend_best_defense
 )
 
 # -------------------------------------------------
@@ -66,22 +86,26 @@ df = detect_known_threats(df)
 
 df = detect_anomalies(df)
 
-df = calculate_risk(df)
+df = detect_unknown_behaviour(df)
+
+drift_summary = monitor_concept_drift(df)
 
 df = map_to_mitre(df)
+
+df = calculate_risk(df)
 
 # -----------------------------------
 # BUILD DYNAMIC ATTACK GRAPH
 # -----------------------------------
 
 # -----------------------------------
-# BUILD GRAPH FROM HIGH-RISK EVENTS
+# BUILD GRAPH FROM RECOGNISED THREATS AND HIGH-RISK EVENTS
 # -----------------------------------
 
 graph_data = df[
-    df["ai_risk_level"].isin(
-        ["High", "Critical"]
-    )
+    df["known_threat"]
+    |
+    df["ai_risk_level"].isin(["High", "Critical"])
 ]
 
 attack_graph = build_attack_graph(
@@ -105,8 +129,10 @@ page = st.sidebar.radio(
         "📡 Network Monitoring",
         "🚨 Threat Detection",
         "🕸️ Attack Graph",
-        "🔮 Attack Forecast"
-    ]
+        "🔮 Attack Forecast",
+        "🛡️ Digital Twin"
+    ],
+    key="main_navigation"
 )
 
 st.sidebar.divider()
@@ -775,12 +801,12 @@ elif page == "🔮 Attack Forecast":
 
     selected_ip = st.selectbox(
     "Select Suspicious Source / Attacker",
-    suspicious_ips)
+    suspicious_ips,
+    key="forecast_source_ip")
     forecast = forecast_next_attack(
     df,
-    selected_ip)
-
-    forecast = forecast_next_attack(df)
+    selected_ip,
+    attack_graph)
 
     # -----------------------------------
     # DISPLAY RESULT
@@ -878,3 +904,689 @@ elif page == "🔮 Attack Forecast":
                 timeline_df,
                 use_container_width=True
             )
+
+
+elif page == "🛡️ Digital Twin":
+
+    # ==========================================
+    # PAGE HEADER
+    # ==========================================
+
+    st.header("🛡️ Network Digital Twin")
+
+    st.caption(
+        "Simulate cyber defense actions safely before applying them to the real network"
+    )
+
+
+    # ==========================================
+    # CREATE DIGITAL TWIN
+    # ==========================================
+
+    twin = create_digital_twin(
+        attack_graph
+    )
+
+
+    # ==========================================
+    # CHECK NETWORK AVAILABILITY
+    # ==========================================
+
+    if twin.number_of_nodes() == 0:
+
+        st.warning(
+            "No high-risk network data is available for simulation."
+        )
+
+        st.stop()
+
+
+    # ==========================================
+    # DIGITAL TWIN STATE
+    # ==========================================
+
+    state = get_twin_state(
+        twin
+    )
+
+
+    # ==========================================
+    # DIGITAL TWIN METRICS
+    # ==========================================
+
+    col1, col2, col3 = st.columns(3)
+
+
+    with col1:
+
+        st.metric(
+            "Network Nodes",
+            state["nodes"]
+        )
+
+
+    with col2:
+
+        st.metric(
+            "Connections",
+            state["connections"]
+        )
+
+
+    with col3:
+
+        st.metric(
+            "Average Risk",
+            state["average_risk"]
+        )
+
+
+    st.divider()
+
+
+    # ==========================================
+    # AI DEFENSE RECOMMENDATION
+    # ==========================================
+
+    st.subheader(
+        "🤖 AI Defense Recommendation"
+    )
+
+
+    best_defense = (
+        recommend_best_defense(
+            twin
+        )
+    )
+
+
+    if best_defense:
+
+        col1, col2, col3 = st.columns(3)
+
+
+        with col1:
+
+            st.metric(
+                "Recommended Action",
+                best_defense["action"]
+            )
+
+
+        with col2:
+
+            st.metric(
+                "Target",
+                best_defense["target"]
+            )
+
+
+        with col3:
+
+            st.metric(
+                "Estimated Risk Reduction",
+                f"{best_defense['risk_reduction']}%"
+            )
+
+
+    st.divider()
+
+
+    # ==========================================
+    # GET NODES AND EDGES
+    # ==========================================
+
+    nodes = list(
+        twin.nodes()
+    )
+
+    edges = list(
+        twin.edges()
+    )
+
+
+    # ==========================================
+    # ATTACK PATH ANALYSIS
+    # ==========================================
+
+    st.subheader(
+        "🎯 Attack Path Analysis"
+    )
+
+
+    attacker = None
+    critical_target = None
+
+
+    if len(nodes) >= 2:
+
+
+        attacker = st.selectbox(
+
+            "Select Attack Source",
+
+            nodes,
+
+            key="digital_twin_attack_source"
+        )
+
+
+        available_targets = [
+
+            node
+            for node in nodes
+            if node != attacker
+        ]
+
+
+        if available_targets:
+
+            critical_target = st.selectbox(
+
+                "Select Critical Target",
+
+                available_targets,
+
+                key="digital_twin_critical_target"
+            )
+
+
+        if (
+            attacker is not None
+            and critical_target is not None
+        ):
+
+            current_path = (
+                check_attack_path(
+
+                    twin,
+
+                    attacker,
+
+                    critical_target
+                )
+            )
+
+
+            if current_path:
+
+                st.warning(
+                    "⚠️ Active attack path detected between the selected nodes."
+                )
+
+            else:
+
+                st.info(
+                    "No active attack path currently exists between the selected nodes."
+                )
+
+
+    else:
+
+        st.info(
+            "At least two nodes are required for attack path analysis."
+        )
+
+
+    st.divider()
+
+
+    # ==========================================
+    # WHAT-IF DEFENSE SIMULATION
+    # ==========================================
+
+    st.subheader(
+        "🧪 What-If Defense Simulation"
+    )
+
+
+    action = st.selectbox(
+
+        "Select Defense Action",
+
+        [
+            "Block IP",
+            "Isolate Host",
+            "Block Connection",
+            "Protect Critical Asset"
+        ],
+
+        key="digital_twin_defense_action"
+    )
+
+
+    target = None
+    source = None
+    destination = None
+
+
+    # ------------------------------------------
+    # TARGET-BASED ACTIONS
+    # ------------------------------------------
+
+    if action in [
+
+        "Block IP",
+
+        "Isolate Host",
+
+        "Protect Critical Asset"
+    ]:
+
+
+        target = st.selectbox(
+
+            "Select Target",
+
+            nodes,
+
+            key="digital_twin_defense_target"
+        )
+
+
+    # ------------------------------------------
+    # CONNECTION-BASED ACTION
+    # ------------------------------------------
+
+    elif action == "Block Connection":
+
+
+        if edges:
+
+
+            edge_options = [
+
+                f"{source_node} → {destination_node}"
+
+                for source_node,
+                destination_node
+
+                in edges
+            ]
+
+
+            selected_edge_text = (
+
+                st.selectbox(
+
+                    "Select Connection",
+
+                    edge_options,
+
+                    key="digital_twin_connection"
+                )
+            )
+
+
+            selected_index = (
+
+                edge_options.index(
+                    selected_edge_text
+                )
+            )
+
+
+            selected_edge = (
+
+                edges[
+                    selected_index
+                ]
+            )
+
+
+            source = selected_edge[0]
+
+            destination = selected_edge[1]
+
+
+        else:
+
+            st.warning(
+                "No network connections are available."
+            )
+
+
+    st.divider()
+
+
+    # ==========================================
+    # RUN SIMULATION BUTTON
+    # ==========================================
+
+    run_simulation = st.button(
+
+        "🚀 Run What-If Simulation",
+
+        key="digital_twin_run_simulation",
+
+        use_container_width=True
+    )
+
+
+    # ==========================================
+    # SIMULATION EXECUTION
+    # ==========================================
+
+    if run_simulation:
+
+
+        result = simulate_defense(
+
+            graph=twin,
+
+            action=action,
+
+            target=target,
+
+            source=source,
+
+            destination=destination,
+
+            attacker=attacker,
+
+            critical_target=critical_target
+        )
+
+
+        simulated_graph = (
+
+            result["graph"]
+        )
+
+
+        # ======================================
+        # RESULTS HEADER
+        # ======================================
+
+        st.divider()
+
+        st.subheader(
+            "📊 Simulation Results"
+        )
+
+
+        # ======================================
+        # RISK METRICS
+        # ======================================
+
+        col1, col2, col3 = st.columns(3)
+
+
+        with col1:
+
+            st.metric(
+
+                "Risk Before",
+
+                result["before_risk"]
+            )
+
+
+        with col2:
+
+            st.metric(
+
+                "Risk After",
+
+                result["after_risk"]
+            )
+
+
+        with col3:
+
+            st.metric(
+
+                "Risk Reduction",
+
+                f"{result['risk_reduction_percent']}%"
+            )
+
+
+        # ======================================
+        # ATTACK PATH BEFORE / AFTER
+        # ======================================
+
+        st.divider()
+
+        st.subheader(
+            "🔍 Attack Path Impact"
+        )
+
+
+        if (
+            attacker is not None
+            and critical_target is not None
+        ):
+
+
+            path_before = (
+
+                check_attack_path(
+
+                    twin,
+
+                    attacker,
+
+                    critical_target
+                )
+            )
+
+
+            path_after = (
+
+                check_attack_path(
+
+                    simulated_graph,
+
+                    attacker,
+
+                    critical_target
+                )
+            )
+
+
+            col1, col2 = st.columns(2)
+
+
+            with col1:
+
+                st.metric(
+
+                    "Attack Path Before",
+
+                    "ACTIVE"
+                    if path_before
+                    else "NOT FOUND"
+                )
+
+
+            with col2:
+
+                st.metric(
+
+                    "Attack Path After",
+
+                    "ACTIVE"
+                    if path_after
+                    else "DISRUPTED"
+                )
+
+
+            if path_before and not path_after:
+
+                st.success(
+                    "🛡️ Defense action successfully disrupted the selected attack path."
+                )
+
+
+            elif path_before and path_after:
+
+                st.warning(
+                    "⚠️ Attack path is still active. Consider another defense action."
+                )
+
+
+        # ======================================
+        # BEFORE VS AFTER GRAPH
+        # ======================================
+
+        st.divider()
+
+        st.subheader(
+            "🕸️ Before vs After Network Simulation"
+        )
+
+
+        # Create one stable layout
+
+        base_positions = nx.spring_layout(
+
+            twin,
+
+            seed=42
+        )
+
+
+        col1, col2 = st.columns(2)
+
+
+        # --------------------------------------
+        # BEFORE GRAPH
+        # --------------------------------------
+
+        with col1:
+
+
+            st.markdown(
+                "### ⚠️ Before Defense"
+            )
+
+
+            fig_before, ax_before = plt.subplots(
+                figsize=(8, 6)
+            )
+
+
+            nx.draw(
+
+                twin,
+
+                base_positions,
+
+                with_labels=True,
+
+                arrows=True,
+
+                node_size=1200,
+
+                font_size=8,
+
+                ax=ax_before
+            )
+
+
+            ax_before.axis(
+                "off"
+            )
+
+
+            st.pyplot(
+                fig_before
+            )
+
+
+            plt.close(
+                fig_before
+            )
+
+
+        # --------------------------------------
+        # AFTER GRAPH
+        # --------------------------------------
+
+        with col2:
+
+
+            st.markdown(
+                "### 🛡️ After Defense"
+            )
+
+
+            fig_after, ax_after = plt.subplots(
+                figsize=(8, 6)
+            )
+
+
+            after_positions = {
+
+                node:
+                base_positions[node]
+
+                for node
+                in simulated_graph.nodes()
+
+                if node
+                in base_positions
+            }
+
+
+            nx.draw(
+
+                simulated_graph,
+
+                after_positions,
+
+                with_labels=True,
+
+                arrows=True,
+
+                node_size=1200,
+
+                font_size=8,
+
+                ax=ax_after
+            )
+
+
+            ax_after.axis(
+                "off"
+            )
+
+
+            st.pyplot(
+                fig_after
+            )
+
+
+            plt.close(
+                fig_after
+            )
+
+
+        # ======================================
+        # FINAL SIMULATION SUMMARY
+        # ======================================
+
+        st.divider()
+
+        st.subheader(
+            "🛡️ Defense Simulation Summary"
+        )
+
+
+        st.success(
+
+            f"""
+
+            Defense simulation completed successfully.
+
+            **Selected Action:** {action}
+
+            **Risk Before:** {result["before_risk"]}
+
+            **Risk After:** {result["after_risk"]}
+
+            **Estimated Risk Reduction:** {result["risk_reduction_percent"]}%
+
+            """
+        )
