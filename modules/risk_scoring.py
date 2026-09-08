@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from modules.attack_graph import CRITICAL_HOSTS
 
-CRITICAL_HOSTS = {"db-01", "database", "domain-controller", "auth-01"}
 SEVERITY_WEIGHTS = {"low": 0, "medium": 5, "high": 10, "critical": 15}
 PROGRESSION_WEIGHTS = {"Port Scan / Reconnaissance": 3, "Credential Attack": 8, "Credential Abuse": 12, "Lateral Movement": 15, "Privilege Escalation": 16, "Data Exfiltration": 18}
 

@@ -95,10 +95,18 @@ def get_suspicious_nodes(graph: nx.DiGraph) -> list[str]:
 
 
 def get_critical_assets(graph: nx.DiGraph) -> list[str]:
-    """Return explicitly critical assets, with a risk fallback for legacy graphs."""
+    """Return explicitly critical assets, with a risk fallback for legacy graphs.
+
+    External IPs are excluded from the risk-based fallback: a high risk score
+    there usually means "attacker sending/receiving malicious traffic", not
+    "protected internal asset", so including them produced nonsense like
+    recommending defenses to protect the attacker's own address.
+    """
     return [
         node for node, data in graph.nodes(data=True)
-        if data.get("node_type") == "critical_asset" or float(data.get("criticality", 0)) >= 0.9 or float(data.get("risk", 0)) >= 80
+        if data.get("node_type") == "critical_asset"
+        or float(data.get("criticality", 0)) >= 0.9
+        or (float(data.get("risk", 0)) >= 80 and data.get("node_type") != "external_ip")
     ]
 
 
