@@ -89,6 +89,23 @@ def _text(df: pd.DataFrame, column: str | None, default: str = "Unknown") -> pd.
     return df[column].fillna(default).astype(str).str.strip().replace("", default)
 
 
+_PROTOCOL_NAMES = {6: "TCP", 17: "UDP", 1: "ICMP"}
+
+
+def _protocol(df: pd.DataFrame, column: str | None) -> pd.Series:
+    """Map numeric protocol codes to names; pass through already-text protocols.
+
+    Numeric protocol columns are read back as float64 (e.g. "6.0") whenever
+    any row is missing a value, so codes must be matched numerically rather
+    than by exact string equality.
+    """
+    text = _text(df, column, "Unknown")
+    if column is None:
+        return text
+    numeric = pd.to_numeric(df[column], errors="coerce")
+    return numeric.map(_PROTOCOL_NAMES).fillna(text)
+
+
 def _event_types(port: pd.Series, request_frequency: pd.Series, transfer: pd.Series) -> pd.Series:
     """Derive broad flow behaviour from telemetry, without using ground-truth labels."""
     event_type = pd.Series("Normal Traffic", index=port.index, dtype="object")
@@ -118,7 +135,7 @@ def convert_cic_to_cybertwin(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, 
     timestamps = pd.to_datetime(clean[mapping["timestamp"]], errors="coerce") if "timestamp" in mapping else pd.Series(pd.NaT, index=clean.index)
     fallback_time = pd.Series(pd.date_range(datetime(2026, 1, 1), periods=len(clean), freq="s"), index=clean.index)
     timestamps = timestamps.fillna(fallback_time)
-    protocol = _text(clean, mapping.get("protocol"), "Unknown").replace({"6": "TCP", "17": "UDP", "1": "ICMP"})
+    protocol = _protocol(clean, mapping.get("protocol"))
     result = pd.DataFrame({
         "timestamp": timestamps,
         "source_ip": _text(clean, mapping.get("source_ip")),

@@ -43,6 +43,27 @@ df, attack_graph, drift_summary, evidence_chain = load_pipeline()
 PAGES = ["SOC Overview", "Network Monitoring", "Threat Detection", "Attack Graph", "Attack Forecast", "Unknown Behaviour Detection", "Concept Drift Monitor", "Digital Twin", "What-If Defense Simulation", "AI Defense Recommendation", "XAI Investigation", "Security Copilot", "Evidence Integrity", "📂 Dataset Analysis"]
 st.sidebar.title("🛡️ CyberTwin AI")
 page = st.sidebar.radio("Navigation", PAGES, key="nav_page")
+
+st.sidebar.markdown("---")
+if st.session_state.get("dataset_analysis_completed"):
+    uploaded_label = f"Uploaded dataset ({st.session_state.get('dataset_file_id', 'dataset').split(':')[0]})"
+    source_choice = st.sidebar.radio(
+        "Data source",
+        ["Demo dataset", uploaded_label],
+        index=1 if st.session_state.get("active_data_source") == "uploaded" else 0,
+        key="data_source_choice",
+        help="Applies to every page, not just Dataset Analysis.",
+    )
+    st.session_state.active_data_source = "uploaded" if source_choice == uploaded_label else "demo"
+else:
+    st.sidebar.caption("Data source: Demo dataset\n\nUpload a CSV in 📂 Dataset Analysis and run the analysis to use it across all pages.")
+
+if st.session_state.get("active_data_source") == "uploaded" and st.session_state.get("dataset_results_df") is not None:
+    df = st.session_state.dataset_results_df
+    attack_graph = st.session_state.dataset_attack_graph
+    drift_summary = monitor_concept_drift(df)
+    evidence_chain = build_evidence_chain(df[df["ai_risk_level"] == "Critical"], critical_only=True)
+
 risk_filter = st.sidebar.multiselect("Risk level", sorted(df.risk_level.unique()), default=sorted(df.risk_level.unique()), key="nav_risk_filter")
 event_filter = st.sidebar.multiselect("Event type", sorted(df.event_type.unique()), default=sorted(df.event_type.unique()), key="nav_event_filter")
 filtered = df[df.risk_level.isin(risk_filter) & df.event_type.isin(event_filter)]
@@ -212,9 +233,14 @@ elif page == "📂 Dataset Analysis":
                         st.session_state.dataset_attack_graph = uploaded_graph
                         st.session_state.dataset_forecast_results = run_info
                         st.session_state.dataset_analysis_completed = True
+                        st.session_state.active_data_source = "uploaded"
                     except (ValueError, TypeError) as error:
                         st.error(f"Analysis could not be completed: {error}")
             if st.session_state.get("dataset_analysis_completed"):
+                if st.session_state.get("active_data_source") == "uploaded":
+                    st.success("This dataset is now active on every dashboard page (SOC Overview, Attack Graph, Threat Detection, etc.). Switch back via the **Data source** control in the sidebar.")
+                else:
+                    st.info("This dataset's results are shown below only. Select it under **Data source** in the sidebar to use it on every dashboard page.")
                 results = st.session_state.dataset_results_df; uploaded_graph = st.session_state.dataset_attack_graph
                 st.subheader("4. AI analysis results")
                 cols = st.columns(6)

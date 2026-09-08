@@ -10,6 +10,9 @@ import pandas as pd
 from modules.attack_graph import get_critical_paths, get_neighbors
 
 
+RECENT_WINDOW = 6
+
+
 ATTACK_TRANSITIONS = {
     "Discovery": ("Credential Access", "Brute Force / credential attack", 0.58),
     "Credential Access": ("Defense Evasion", "Valid account abuse", 0.66),
@@ -51,9 +54,18 @@ def forecast_next_attack(
     # Synthetic data labels explicit attack chains.  Prefer the latest such
     # chain over unrelated activity that happens to share a source IP.
     labelled_events = [event for event in timeline if event.get("scenario_id") not in (None, "", "baseline")]
-    if labelled_events:
+    distinct_scenarios = {event["scenario_id"] for event in labelled_events}
+    if len(distinct_scenarios) > 1:
         latest_scenario = labelled_events[-1]["scenario_id"]
         timeline = [event for event in labelled_events if event.get("scenario_id") == latest_scenario]
+    elif len(distinct_scenarios) == 1:
+        # A single scenario_id shared by every labelled event (e.g. uploaded
+        # datasets are stamped with one placeholder id) doesn't distinguish
+        # separate incidents, so it can't be used to isolate "the" chain.
+        # Fall back to a bounded recency window instead of treating the
+        # entire history as one attack -- RECENT_WINDOW comfortably exceeds
+        # the point where the sequence bonus below already saturates.
+        timeline = timeline[-RECENT_WINDOW:]
 
     latest = timeline[-1]
     current_stage = latest.get("mitre_tactic", "Unknown")
